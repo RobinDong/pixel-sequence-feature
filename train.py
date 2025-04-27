@@ -9,9 +9,9 @@ import torch.utils.data as data
 from dataclasses import asdict
 from collections import OrderedDict
 from torch.nn import functional as F
+from torchvision.models import resnet50
 from config import TrainConfig
 from datasets.mnist import MNIST
-from models.baseline import SimpleConv
 
 SEED = 20240605
 CKPT_DIR = "out"
@@ -86,7 +86,7 @@ class Trainer:
                 loss = self.criterion(out, labels)
                 accumu_out.append(out.cpu().detach())
                 accumu_labels.append(labels.cpu().detach())
-                accumu_loss += loss
+                accumu_loss += loss.detach().item()
 
         # accuracy
         out = torch.cat(accumu_out)
@@ -126,8 +126,9 @@ class Trainer:
 
     def init(self, resume: str):
         # create model
-        # model_name = "efficientnet_b0"
-        model = SimpleConv()
+        model = resnet50(pretrained=False)
+        model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        model.fc = nn.Linear(model.fc.in_features, 10)
         model = model.to(self.device_type)
         print("model:", model)
 
