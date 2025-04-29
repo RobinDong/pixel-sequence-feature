@@ -1,4 +1,5 @@
 import os
+import fire
 import time
 import torch
 import contextlib
@@ -9,9 +10,8 @@ import torch.utils.data as data
 from dataclasses import asdict
 from collections import OrderedDict
 from torch.nn import functional as F
-from torchvision.models import resnet50
-from config import TrainConfig
-from datasets.mnist import MNIST
+from config import get_config
+from factory import ModelFactory, DatasetFactory
 
 SEED = 20240605
 CKPT_DIR = "out"
@@ -19,8 +19,8 @@ LABEL_SMOOTH_RATIO = 0.5
 
 
 class Trainer:
-    def __init__(self, config):
-        self.config = config
+    def __init__(self):
+        self.config = None
         self.device_type = "cuda" if torch.cuda.is_available() else "mps"
         self.dtype = torch.bfloat16
         if self.device_type == "cuda":
@@ -46,7 +46,11 @@ class Trainer:
 
     def train_step(self, model, optimizer, batch):
         images, labels = batch
-        images = images.unsqueeze(1).to(self.device_type)
+        if len(images.size()) <= 3:
+            images = images.unsqueeze(1)
+        else:
+            images = images.permute(0, 3, 1, 2)
+        images = images.to(self.device_type).to(self.dtype)
         labels = F.one_hot(labels.to(torch.long), self.config.num_classes)
         labels = labels.to(self.device_type)
 
@@ -77,7 +81,11 @@ class Trainer:
         accumu_loss = 0
         for data_entry in self.val_loader:
             images, labels = data_entry
-            images = images.unsqueeze(1).to(self.device_type)
+            if len(images.size()) <= 3:
+                images = images.unsqueeze(1)
+            else:
+                images = images.permute(0, 3, 1, 2)
+            images = images.to(self.device_type).to(self.dtype)
             labels = labels.to(self.device_type).to(torch.long)
             labels = F.one_hot(labels, self.config.num_classes)
             # forward
@@ -102,9 +110,8 @@ class Trainer:
         cmodel.train()
         return res
 
-    def load_dataset(self):
-        train_ds = MNIST()
-        val_ds = MNIST(validation=True)
+    def load_dataset(self, dataset_name, config):
+        train_ds, val_ds = DatasetFactory.create_dataset(dataset_name, config)
 
         self.train_loader = data.DataLoader(
             train_ds,
@@ -117,18 +124,15 @@ class Trainer:
 
         self.val_loader = data.DataLoader(
             val_ds,
-            self.config.batch_size,
+            self.config.batch_size // 4,
             num_workers=self.config.num_workers,
             shuffle=False,
             pin_memory=torch.cuda.is_available(),
             prefetch_factor=1,
         )
 
-    def init(self, resume: str):
-        # create model
-        model = resnet50(pretrained=False)
-        model.conv1 = nn.Conv2d(1, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        model.fc = nn.Linear(model.fc.in_features, 10)
+    def init_model(self, model_name: str, config, resume: str):
+        model = ModelFactory.create_model(model_name, config)
         model = model.to(self.device_type)
         print("model:", model)
 
@@ -139,11 +143,14 @@ class Trainer:
             model.load_state_dict(state_dict)
             print("Resume training...")
 
-        self.load_dataset()
         return model
 
-    def train(self, resume="", learning_rate=None):
-        model = self.init(resume)
+    def train(
+        self, model_name="resnet50", dataset_name="mnist", resume="", learning_rate=None
+    ):
+        self.config = get_config(dataset_name)
+        self.load_dataset(dataset_name, self.config)
+        model = self.init_model(model_name, self.config, resume)
         if learning_rate:
             self.config.lr = learning_rate
         cmodel = torch.compile(model) if torch.cuda.is_available() else model
@@ -153,7 +160,7 @@ class Trainer:
         begin = time.time()
 
         scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, list(range(3, self.config.epochs, 3)), gamma=0.5
+            optimizer, list(range(6, self.config.epochs, 6)), gamma=0.5
         )
 
         log_iters = len(self.train_loader) // 5
@@ -215,7 +222,5 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision("high")
     np.random.seed(SEED)
 
-    config = TrainConfig()
-
-    trainer = Trainer(config)
-    trainer.train()
+    trainer = Trainer()
+    fire.Fire(trainer.train)

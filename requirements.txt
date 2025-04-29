@@ -1,4 +1,8 @@
 torch
 torchvision
+timm
 numpy
+scipy
 matplotlib
+opencv-python
+fire
