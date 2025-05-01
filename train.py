@@ -10,6 +10,7 @@ import torch.utils.data as data
 from dataclasses import asdict
 from collections import OrderedDict
 from torch.nn import functional as F
+from torchvision.transforms import v2
 from config import get_config
 from factory import ModelFactory, DatasetFactory
 
@@ -44,28 +45,30 @@ class Trainer:
         one_hot = one_hot + (targets * LABEL_SMOOTH_RATIO)
         return torch.sum(-one_hot * F.log_softmax(outputs, -1), -1).mean()
 
-    def train_step(self, model, optimizer, batch):
+    def train_step(self, model, optimizer, batch, step_index):
         images, labels = batch
         if len(images.size()) <= 3:
             images = images.unsqueeze(1)
-        else:
-            images = images.permute(0, 3, 1, 2)
         images = images.to(self.device_type).to(self.dtype)
         labels = F.one_hot(labels.to(torch.long), self.config.num_classes)
         labels = labels.to(self.device_type)
+        images, labels = self.cm(images, labels)
 
         with self.ctx:
             out = model(images)
             loss = self.criterion(out, labels)
+            loss = loss / self.config.accumulation_steps
 
         self.scaler.scale(loss).backward()
-        self.scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.grad_clip)
-        self.scaler.step(optimizer)
-        self.scaler.update()
-        optimizer.zero_grad(set_to_none=True)
 
-        return out, labels, loss
+        if (step_index + 1) % self.config.accumulation_steps == 0:
+            self.scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), self.config.grad_clip)
+            self.scaler.step(optimizer)
+            self.scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+
+        return out, labels, loss * self.config.accumulation_steps
 
     def get_accuracy(self, out, target):
         _, predict = torch.max(out, dim=-1)
@@ -83,8 +86,6 @@ class Trainer:
             images, labels = data_entry
             if len(images.size()) <= 3:
                 images = images.unsqueeze(1)
-            else:
-                images = images.permute(0, 3, 1, 2)
             images = images.to(self.device_type).to(self.dtype)
             labels = labels.to(self.device_type).to(torch.long)
             labels = F.one_hot(labels, self.config.num_classes)
@@ -119,7 +120,7 @@ class Trainer:
             num_workers=self.config.num_workers,
             shuffle=True,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=1,
+            prefetch_factor=2,
         )
 
         self.val_loader = data.DataLoader(
@@ -128,7 +129,7 @@ class Trainer:
             num_workers=self.config.num_workers,
             shuffle=False,
             pin_memory=torch.cuda.is_available(),
-            prefetch_factor=1,
+            prefetch_factor=2,
         )
 
     def init_model(self, model_name: str, config, resume: str):
@@ -149,6 +150,10 @@ class Trainer:
         self, model_name="resnet50", dataset_name="mnist", resume="", learning_rate=None
     ):
         self.config = get_config(dataset_name)
+        self.cutmix = v2.CutMix(num_classes=self.config.num_classes)
+        self.mixup = v2.MixUp(num_classes=self.config.num_classes)
+        self.cm = v2.RandomChoice([self.cutmix, self.mixup])
+
         self.load_dataset(dataset_name, self.config)
         model = self.init_model(model_name, self.config, resume)
         if learning_rate:
@@ -159,16 +164,23 @@ class Trainer:
         best_metric = 0.0
         begin = time.time()
 
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer, list(range(6, self.config.epochs, 6)), gamma=0.5
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            "max",
+            factor=0.5,
+            patience=3,
+            threshold=5e-3,
+            threshold_mode="abs",
         )
 
         log_iters = len(self.train_loader) // 5
         iteration = 0
 
         for epoch in range(self.config.epochs):
-            for batch in self.train_loader:
-                out, labels, loss = self.train_step(cmodel, optimizer, batch)
+            for step_index, batch in enumerate(self.train_loader):
+                out, labels, loss = self.train_step(
+                    cmodel, optimizer, batch, step_index
+                )
 
                 if iteration % log_iters == 0 and iteration > 0:
                     metrics = OrderedDict(
@@ -210,7 +222,11 @@ class Trainer:
             for name, val in accumulator.items():
                 messages.append(f"{name}: {val:.3f}")
             print(" ".join(messages), flush=True)
-            scheduler.step()
+            scheduler.step(val_metric)
+
+            current_lr = optimizer.param_groups[0]["lr"]
+            if current_lr < 1e-6:
+                break
 
         print("Best validating metric:", best_metric)
         return best_metric
