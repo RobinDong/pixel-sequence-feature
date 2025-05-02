@@ -61,6 +61,17 @@ class ViTSmallPatch4(VisionTransformer):
         )
 
 
+class ViTSmallPatch2(VisionTransformer):
+    def __init__(self, **kwargs):
+        super().__init__(
+            patch_size=2,
+            embed_dim=384,  # Same as vit_small
+            depth=12,
+            num_heads=6,
+            **kwargs
+        )
+
+
 def create_resnet50(config):
     model = resnet50(pretrained=False)
     model.conv1 = torch.nn.Conv2d(
@@ -75,14 +86,17 @@ def create_vit(config):
         "vit_small_patch8_224",
         pretrained=True,
         img_size=config.image_shape,
-        patch_size=8,
+        patch_size=2,
         in_chans=config.channels,
         num_classes=config.num_classes,
     )
-    """model_new = ViTSmallPatch4(img_size=config.image_shape, num_classes=config.num_classes)
+    model_new = ViTSmallPatch2(
+        img_size=config.image_shape, num_classes=config.num_classes
+    )
     model_new = load_partial_weights(model_new, model)
-    interpolate_pos_embed(model_new, model)"""
-    return model
+    interpolate_pos_embed(model_new, model)
+    del model
+    return model_new
 
 
 class ModelFactory:

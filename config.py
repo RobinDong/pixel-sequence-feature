@@ -21,11 +21,11 @@ def get_config(dataset_name):
         ),
         "flower": TrainConfig(
             lr=1e-5,
-            batch_size=128,
+            batch_size=8,
             num_classes=102,
             channels=3,
             image_shape=(224, 224),
-            accumulation_steps=1,
+            accumulation_steps=16,
         ),
         "imagenet100": TrainConfig(
             lr=1e-5,
