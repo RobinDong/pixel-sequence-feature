@@ -147,7 +147,7 @@ class Trainer:
         return model
 
     def train(
-        self, model_name="resnet50", dataset_name="mnist", resume="", learning_rate=None
+        self, model_name="resnet50", patch_size=32, dataset_name="mnist", resume="", learning_rate=None
     ):
         self.config = get_config(dataset_name)
         self.cutmix = v2.CutMix(num_classes=self.config.num_classes)

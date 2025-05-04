@@ -12,6 +12,7 @@ class TrainConfig:
     channels: int = 1
     image_shape: tuple[int] = (28, 28)
     accumulation_steps: int = 4
+    patch_size: int = 32
 
 
 def get_config(dataset_name):

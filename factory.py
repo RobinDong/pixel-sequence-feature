@@ -57,7 +57,7 @@ class ViTSmallPatch4(VisionTransformer):
             embed_dim=384,  # Same as vit_small
             depth=12,
             num_heads=6,
-            **kwargs
+            **kwargs,
         )
 
 
@@ -68,7 +68,7 @@ class ViTSmallPatch2(VisionTransformer):
             embed_dim=384,  # Same as vit_small
             depth=12,
             num_heads=6,
-            **kwargs
+            **kwargs,
         )
 
 
@@ -82,21 +82,34 @@ def create_resnet50(config):
 
 
 def create_vit(config):
-    model = timm.create_model(
-        "vit_small_patch8_224",
-        pretrained=True,
-        img_size=config.image_shape,
-        patch_size=2,
-        in_chans=config.channels,
-        num_classes=config.num_classes,
-    )
-    model_new = ViTSmallPatch2(
-        img_size=config.image_shape, num_classes=config.num_classes
-    )
-    model_new = load_partial_weights(model_new, model)
-    interpolate_pos_embed(model_new, model)
-    del model
-    return model_new
+    if config.patch_size >= 8:
+        model = timm.create_model(
+            f"vit_small_patch{config.patch_size}_224",
+            pretrained=True,
+            img_size=config.image_shape,
+            in_chans=config.channels,
+            num_classes=config.num_classes,
+        )
+    else:
+        model = timm.create_model(
+            "vit_small_patch8_224",
+            pretrained=True,
+            img_size=config.image_shape,
+            in_chans=config.channels,
+            num_classes=config.num_classes,
+        )
+        if config.patch_size == 4:
+            model_new = ViTSmallPatch4(
+                img_size=config.image_shape, num_classes=config.num_classes
+            )
+        elif config.patch_size == 2:
+            model_new = ViTSmallPatch2(
+                img_size=config.image_shape, num_classes=config.num_classes
+            )
+        model_new = load_partial_weights(model_new, model)
+        interpolate_pos_embed(model_new, model)
+        model = model_new
+    return model
 
 
 class ModelFactory:
@@ -116,12 +129,22 @@ class DatasetFactory:
         dataset_map = {
             "mnist": (MNIST(), MNIST(validation=True)),
             "flower": (
-                Flower(config.image_shape),
-                Flower(config.image_shape, validation=True),
+                Flower(
+                    config.image_shape,
+                ),
+                Flower(
+                    config.image_shape,
+                    validation=True,
+                ),
             ),
             "imagenet100": (
-                Imagenet100(config.image_shape),
-                Imagenet100(config.image_shape, validation=True),
+                Imagenet100(
+                    config.image_shape,
+                ),
+                Imagenet100(
+                    config.image_shape,
+                    validation=True,
+                ),
             ),
         }
         return dataset_map[dataset_name]
