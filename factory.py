@@ -1,6 +1,7 @@
 """Factory for models and datasets."""
 
 import torch
+import torch.nn as nn
 import timm
 
 from torchvision.models import resnet50
@@ -40,7 +41,7 @@ def interpolate_pos_embed(model, checkpoint_model):
     pos_tokens = pos_tokens.reshape(1, orig_size, orig_size, embedding_size).permute(
         0, 3, 1, 2
     )
-    pos_tokens = torch.nn.functional.interpolate(
+    pos_tokens = nn.functional.interpolate(
         pos_tokens, size=(new_size, new_size), mode="bicubic", align_corners=False
     )
     pos_tokens = pos_tokens.permute(0, 2, 3, 1).reshape(
@@ -74,10 +75,10 @@ class ViTSmallPatch2(VisionTransformer):
 
 def create_resnet50(config):
     model = resnet50(pretrained=False)
-    model.conv1 = torch.nn.Conv2d(
+    model.conv1 = nn.Conv2d(
         config.channels, 64, kernel_size=7, stride=2, padding=3, bias=False
     )
-    model.fc = torch.nn.Linear(model.fc.in_features, config.num_classes)
+    model.fc = nn.Linear(model.fc.in_features, config.num_classes)
     return model
 
 
@@ -85,7 +86,7 @@ def create_vit(config):
     if config.patch_size >= 8:
         model = timm.create_model(
             f"vit_small_patch{config.patch_size}_224",
-            pretrained=True,
+            pretrained=False,
             img_size=config.image_shape,
             in_chans=config.channels,
             num_classes=config.num_classes,
@@ -93,7 +94,7 @@ def create_vit(config):
     else:
         model = timm.create_model(
             "vit_small_patch8_224",
-            pretrained=True,
+            pretrained=False,
             img_size=config.image_shape,
             in_chans=config.channels,
             num_classes=config.num_classes,
@@ -106,10 +107,45 @@ def create_vit(config):
             model_new = ViTSmallPatch2(
                 img_size=config.image_shape, num_classes=config.num_classes
             )
-        model_new = load_partial_weights(model_new, model)
-        interpolate_pos_embed(model_new, model)
+        # model_new = load_partial_weights(model_new, model)
+        # interpolate_pos_embed(model_new, model)
         model = model_new
     return model
+
+
+class PixelTransformer(nn.Module):
+    def __init__(self, config, model_dim=384, num_heads=6, dropout=0.1, num_layers=6):
+        super().__init__()
+        self.config = config
+        self.proj = nn.Linear(49, model_dim)
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=model_dim, nhead=num_heads, dropout=dropout
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer, num_layers=num_layers
+        )
+
+        # Classification head
+        self.classifier = nn.Sequential(
+            nn.Linear(model_dim, model_dim),
+            nn.ReLU(),
+            nn.Linear(model_dim, config.num_classes),
+        )
+
+    def forward(self, inputs):
+        out = self.proj(inputs)
+
+        # seq_len = out.size(1)
+
+        out = out.transpose(0, 1)
+        out = self.transformer_encoder(out)
+        out = out.mean(dim=0)
+        return self.classifier(out)
+
+
+def create_transformer(config):
+    return PixelTransformer(config)
 
 
 class ModelFactory:
@@ -118,6 +154,7 @@ class ModelFactory:
         model_map = {
             "resnet50": create_resnet50,
             "vit": create_vit,
+            "transformer": create_transformer,
         }
         fn = model_map[model_name]
         return fn(config)
@@ -131,9 +168,11 @@ class DatasetFactory:
             "flower": (
                 Flower(
                     config.image_shape,
+                    sequenced=config.sequenced,
                 ),
                 Flower(
                     config.image_shape,
+                    sequenced=config.sequenced,
                     validation=True,
                 ),
             ),

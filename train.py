@@ -47,12 +47,13 @@ class Trainer:
 
     def train_step(self, model, optimizer, batch, step_index):
         images, labels = batch
-        if len(images.size()) <= 3:
+        if len(images.size()) <= 3 and not self.config.sequenced:
             images = images.unsqueeze(1)
         images = images.to(self.device_type).to(self.dtype)
         labels = F.one_hot(labels.to(torch.long), self.config.num_classes)
         labels = labels.to(self.device_type)
-        images, labels = self.cm(images, labels)
+        if not self.config.sequenced:
+            images, labels = self.cm(images, labels)
 
         with self.ctx:
             out = model(images)
@@ -84,7 +85,7 @@ class Trainer:
         accumu_loss = 0
         for data_entry in self.val_loader:
             images, labels = data_entry
-            if len(images.size()) <= 3:
+            if len(images.size()) <= 3 and not self.config.sequenced:
                 images = images.unsqueeze(1)
             images = images.to(self.device_type).to(self.dtype)
             labels = labels.to(self.device_type).to(torch.long)
@@ -111,6 +112,11 @@ class Trainer:
         cmodel.train()
         return res
 
+    @staticmethod
+    def my_collate(batch):
+        batch = filter(lambda img: img is not None, batch)
+        return data.dataloader.default_collate(list(batch))
+
     def load_dataset(self, dataset_name, config):
         train_ds, val_ds = DatasetFactory.create_dataset(dataset_name, config)
 
@@ -121,6 +127,7 @@ class Trainer:
             shuffle=True,
             pin_memory=torch.cuda.is_available(),
             prefetch_factor=2,
+            collate_fn=self.my_collate,
         )
 
         self.val_loader = data.DataLoader(
@@ -130,6 +137,7 @@ class Trainer:
             shuffle=False,
             pin_memory=torch.cuda.is_available(),
             prefetch_factor=2,
+            collate_fn=self.my_collate,
         )
 
     def init_model(self, model_name: str, config, resume: str):
@@ -140,16 +148,24 @@ class Trainer:
         if resume:
             checkpoint = torch.load(resume, map_location=self.device_type)
             state_dict = checkpoint["model"]
-            self.config.lr = 1e-3
+            self.config.lr = 1e-4
             model.load_state_dict(state_dict)
             print("Resume training...")
 
         return model
 
     def train(
-        self, model_name="resnet50", patch_size=32, dataset_name="mnist", resume="", learning_rate=None
+        self,
+        model_name="resnet50",
+        patch_size=32,
+        sequenced=False,
+        dataset_name="mnist",
+        resume="",
+        learning_rate=None,
     ):
         self.config = get_config(dataset_name)
+        self.config.patch_size = patch_size
+        self.config.sequenced = sequenced
         self.cutmix = v2.CutMix(num_classes=self.config.num_classes)
         self.mixup = v2.MixUp(num_classes=self.config.num_classes)
         self.cm = v2.RandomChoice([self.cutmix, self.mixup])

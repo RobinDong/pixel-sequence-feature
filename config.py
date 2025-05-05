@@ -13,6 +13,7 @@ class TrainConfig:
     image_shape: tuple[int] = (28, 28)
     accumulation_steps: int = 4
     patch_size: int = 32
+    sequenced: bool = False
 
 
 def get_config(dataset_name):
@@ -21,12 +22,12 @@ def get_config(dataset_name):
             lr=1e-2, batch_size=64, num_classes=10, channels=1, image_shape=(28, 28)
         ),
         "flower": TrainConfig(
-            lr=1e-5,
-            batch_size=8,
+            lr=1e-4,
+            batch_size=32,
             num_classes=102,
             channels=3,
             image_shape=(224, 224),
-            accumulation_steps=16,
+            accumulation_steps=4,
         ),
         "imagenet100": TrainConfig(
             lr=1e-5,
