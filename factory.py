@@ -114,10 +114,11 @@ def create_vit(config):
 
 
 class PixelTransformer(nn.Module):
-    def __init__(self, config, model_dim=384, num_heads=6, dropout=0.1, num_layers=6):
+    def __init__(self, config, model_dim=384, num_heads=6, dropout=0.1, num_layers=12):
         super().__init__()
         self.config = config
-        self.proj = nn.Linear(49, model_dim)
+        input_dim = config.patch_size * config.patch_size * 3 + 1
+        self.proj = nn.Linear(input_dim, model_dim)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=model_dim, nhead=num_heads, dropout=dropout
@@ -168,10 +169,12 @@ class DatasetFactory:
             "flower": (
                 Flower(
                     config.image_shape,
+                    patch_size = config.patch_size,
                     sequenced=config.sequenced,
                 ),
                 Flower(
                     config.image_shape,
+                    patch_size = config.patch_size,
                     sequenced=config.sequenced,
                     validation=True,
                 ),

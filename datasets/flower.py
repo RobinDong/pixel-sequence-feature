@@ -14,6 +14,7 @@ class Flower(data.Dataset):
     def __init__(
         self,
         image_shape,
+        patch_size,
         data_dir="/data/oxford_102_flower/",
         sequenced=False,
         validation=False,
@@ -23,6 +24,7 @@ class Flower(data.Dataset):
 
         self.sequenced = sequenced
         self.image_shape = image_shape
+        self.patch_size = patch_size
         self.splits = scipy.io.loadmat(data_dir + "setid.mat")
         self.labels = scipy.io.loadmat(data_dir + "imagelabels.mat")["labels"][0]
         self.image_path = data_dir + "images/"
@@ -76,22 +78,22 @@ class Flower(data.Dataset):
             sequence = []
             simg = img.permute(1, 2, 0)
             height, width, channel = simg.size()
-            patch_size = 4
-            cols = 224 // patch_size
+            cols = 224 // self.patch_size
             length = cols * cols
-            zero_patch = torch.zeros(patch_size, patch_size, 3)
-            for idx in range(0, height, patch_size):
-                for jdx in range(0, width, patch_size):
-                    patch = simg[idx : idx + patch_size, jdx : jdx + patch_size, :]
+            zero_patch = torch.zeros(self.patch_size, self.patch_size, 3)
+            for idx in range(0, height, self.patch_size):
+                for jdx in range(0, width, self.patch_size):
+                    patch = simg[idx : idx + self.patch_size, jdx : jdx + self.patch_size, :]
                     if torch.equal(patch, zero_patch):
                         continue
-                    pos = (idx // patch_size * cols + jdx // patch_size) / length
+                    pos = (idx // self.patch_size * cols + jdx // self.patch_size) / length
                     item = torch.cat((patch.flatten() / 255.0, torch.tensor([pos])))
                     sequence.append(item)
             if len(sequence) <= 0:
                 return None
             sequence = torch.stack(sequence)
-            padded = torch.zeros(length, 49)
+            dims = patch.size(0) * patch.size(1) * patch.size(2) + 1
+            padded = torch.zeros(length, dims)
             padded[: sequence.shape[0]] = sequence
             return padded, label
         return img, label
